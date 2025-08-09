@@ -412,7 +412,7 @@ ggplot(data = gene_types_all) +
 
 ##                 pheatmap                                ----------
 
-## The heat map allows us to see the bigger picture. For better visualization,  
+## The heat map allows us to see the big picture. For better visualization,  
 # we take samples from batch 4 and the genes with the most pronounced 
 # differential expression across all cancer types.
 
@@ -560,7 +560,8 @@ gene_by_ct <- gene_by_ct %>%
 # ANKRD and RP genes are again present in this table.
 gene_by_ct %>% 
   filter(rs >=4) %>%      # filter genes common to at least 4 cancer types
-  dplyr::select(SYMBOL,GENENAME, breast, hepatobiliary,CRC,GBM,lung, pancreas) %>%
+  dplyr::select(SYMBOL, GENENAME, breast, hepatobiliary,
+                CRC, GBM, lung, pancreas) %>%
   arrange(SYMBOL)
 
 # the following genes appeared only for one cancer type:
@@ -620,18 +621,18 @@ DEresults_hep_lung[[3]]
 #                Conclusion                                 ------------
 
 # The GSE68086 datasets contain counts of RNA reads for 285 samples and 57,736 
-# genes. These data are from a high-throughput sequencing experiment and include 
-# 55 samples from healthy individuals (HC, control group) and 228 samples from 
-# patients with six different cancer types: lung cancer, colorectal cancer, 
+# genes. These data are from a high-throughput sequencing experiment and include
+# 55 samples from healthy individuals (HC, control group) and 228 samples from
+# patients with six different cancer types: lung cancer, colorectal cancer,
 # pancreatic cancer, breast cancer, glioblastoma, and hepatobiliary carcinoma.
 
 # • The main variables that can be extracted from the raw metadata file are 
-# batch number (batch), cancer type (cancer_type), and mutation subclass 
+# batch number (batch), cancer type (cancer_type), and mutation subclass
 # (mutational_subclass).
 
-# ◦ 61.1% of the samples are wild type (wt), which is found in all cancer groups. 
-# The most common mutation in the data is the KRAS (22.3%), which is found the
-# pancreas, lung, hepatobiliary, and CRC samples. Mutations such as 
+# ◦ 61.1% of the samples are wild type (wt), which is found in all cancer
+# groups. The most common mutation in the data is the KRAS (22.3%), which is
+# found the pancreas, lung, hepatobiliary, and CRC samples. Mutations such as
 # triple_negative, PIK3CA, HER2_PIK3CA and HER2 are specific to breast cancer,
 # and MET and KRAS_MET are found only in the lung cancer group.
 
@@ -639,96 +640,109 @@ DEresults_hep_lung[[3]]
 # present in the control group (HC).
 
 # ◦ During the cleaning/filtering process, 53 samples were discarded, including
-# two samples with low read counts, samples that were less correlated within
+# two samples with low reads counts, samples that were less correlated within 
 # their cancer_type group, and batches 1, 5, and 6.
 
-# • The counts_matrix that was used as input to the DESeq() function 
-# contained the raw counts of RNA sequencing reads corresponding to 57,736 genes
-# and 232 samples.
+# • The counts_matrix that was used as input to the DESeq() function contained
+# the raw counts of RNA sequencing reads corresponding to 57,736 genes and 232
+# samples.
 
-# ◦ About 50% of these genes have 0 raw counts
-
-# ◦ To apply unsupervised machine learning methods, the counts were normalized
-# and a variance stabilizing transformation was applied (DESeq2 vst() function  
-# was used for the entire dataset and varianceStabilizingTransformation() for a
-# subset).
+# ◦ About 50% of these genes have 0 raw counts.
+ 
+# ◦ Before applying unsupervised machine learning methods, count normalization
+# and a variance stabilizing transformation were applied (DESeq2 vst() function
+# was used for the entire dataset and varianceStabilizingTransformation() for
+# a subset).
 
 # • Surrogate variable analysis (SVA) and Principal component analysis (PCA)
 # showed the presence of the batch effect.
 
-# • We observe an increase in the proportion of protein-coding genes among 
+# • Differential gene expression analysis was performed using the DESeq()
+# function, and the ‘betaPrior’ argument was set to TRUE to obtain shrunken
+# estimates. The design formula included batch, mutational_subclass and 
+# cancer_type.
+
+# • The results were extracted using the results() function and the DEresults()
+# user function.
+
+# ◦ We observe an increase in the proportion of protein-coding genes among 
 # differentially expressed genes.
 
-# • For all cancer types, there are more down-regulated genes than up-regulated
+# ◦ For all cancer types, there are more down-regulated genes than up-regulated
 # genes, but for GBM this difference is smaller than for the other 5 cancer
 # types in this dataset.
 
-# • If we take the 30 genes with the highest differential expression for each
+# ◦ If we take the 30 genes with the highest differential expression for each
 # cancer type, we get a total of 103 unique genes, since there are genes that
 # are common to at least two cancer types.
- 
-# • For CRC, lung and pancreas, about half of the genes in the top results are
-# RP genes.
 
-# • There are 24 out of 30 same genes in top results for CRC and pancreas.
- 
-# • Gene expression in GBM samples differed least from control samples among all
-#   cancer types in this dataset.
+# ◦ For CRC, lung and pancreas, about half of the genes in the top results are
+# ribosomal protein genes.
+
+# ◦ In the top results for CRC and pancreas, 24 out of 30 genes are the same,
+# indicating similar gene expression profiles for these cancer types. PCA plots
+# also indicate similarities between CRC and pancreas samples.
+
+# ◦ Gene expression in GBM samples differed least from control samples among all
+# cancer types in this dataset.
 
 #                References                                 -----------
 
-# (1) Li, M.; Sun, Q.; Wang, X. Transcriptional Landscape of Human Cancers.
+# [1] Li, M.; Sun, Q.; Wang, X. Transcriptional Landscape of Human Cancers.
 # Oncotarget 2017, 8 (21), 34534–34551. https://doi.org/10.18632/oncotarget.15837.
-# (2) Xu, H.; Ma, Y.; Zhang, J.; Gu, J.; Jing, X.; Lu, S.; Fu, S.; Huo, J. 
+# [2] Xu, H.; Ma, Y.; Zhang, J.; Gu, J.; Jing, X.; Lu, S.; Fu, S.; Huo, J. 
 # Identification and Verification of Core Genes in Colorectal Cancer. 
 # BioMed Research International 2020, 2020 (1), 8082697.
 # https://doi.org/10.1155/2020/8082697.
-# (3) Hu, H.; He, J.; Zhao, H. Construction and Validation of a Diagnostic Model
+# [3] Hu, H.; He, J.; Zhao, H. Construction and Validation of a Diagnostic Model
 # for Cholangiocarcinoma Based on Tumor-Educated Platelet RNA Expression Profiles.
 # Oncologie 2025, 27 (2), 277–293. https://doi.org/10.1515/oncologie-2024-0520.
-# (4) Ge, X.; Yuan, L.; Cheng, B.; Dai, K. Identification of Seven 
+# [4] Ge, X.; Yuan, L.; Cheng, B.; Dai, K. Identification of Seven 
 # Tumor-Educated Platelets RNAs for Cancer Diagnosis. Journal of Clinical
 # Laboratory Analysis 2021, 35 (6), e23791. https://doi.org/10.1002/jcla.23791.
-# (5) Best, M. G.; Sol, N.; Kooi, I.; Tannous, J.; Westerman, B. A.; Rustenburg,
+# [5] Best, M. G.; Sol, N.; Kooi, I.; Tannous, J.; Westerman, B. A.; Rustenburg,
 # F.; Schellen, P.; Verschueren, H.; Post, E.; Koster, J.; Ylstra, B.; Ameziane, 
 # N.; Dorsman, J.; Smit, E. F.; Verheul, H. M.; Noske, D. P.; Reijneveld, J. C.;
 # Nilsson, R. J. A.; Tannous, B. A.; Wesseling, P.; Wurdinger, T. RNA-Seq of
 # Tumor-Educated Platelets Enables Blood-Based Pan-Cancer, Multiclass, and 
 # Molecular Pathway Cancer Diagnostics. Cancer Cell 2015, 28 (5), 666–676. 
 # https://doi.org/10.1016/j.ccell.2015.09.018.
-# (6) Wang, L.; Felts, S. J.; Van Keulen, V. P.; Pease, L. R.; Zhang, Y. 
+# [6] Wang, L.; Felts, S. J.; Van Keulen, V. P.; Pease, L. R.; Zhang, Y. 
 # Exploring the Effect of Library Preparation on RNA Sequencing Experiments.
 # Genomics 2019, 111 (6), 1752–1759. https://doi.org/10.1016/j.ygeno.2018.11.030.
-# (7) Evans, C.; Hardin, J.; Stoebel, D. M. Selecting Between-Sample RNA-Seq
+# [7] Evans, C.; Hardin, J.; Stoebel, D. M. Selecting Between-Sample RNA-Seq
 # Normalization Methods from the Perspective of Their Assumptions. Briefings in
 # Bioinformatics 2017, 19 (5), 776–792. https://doi.org/10.1093/bib/bbx008.
-# (8) Love, M. I.; Huber, W.; Anders, S. Moderated Estimation of Fold Change and 
+# [8] Leek, J. D., Jeffrey T AND Storey. Capturing Heterogeneity in Gene
+# Expression Studies by Surrogate Variable Analysis. PLOS Genetics 2007, 3 (9),
+# 1–12.
+# [9] Love, M. I.; Huber, W.; Anders, S. Moderated Estimation of Fold Change and 
 # Dispersion for RNA-Seq Data with DESeq2. Genome Biology 2014, 15 (12), 550. 
 # https://doi.org/10.1186/s13059-014-0550-8.
-# (9) Love, M. I.; Anders, S.; Huber, W. Analyzing RNA-Seq Data with DESeq2, 2025.
-# (10) Danielsson, F.; Skogs, M.; Huss, M.; Rexhepaj, E.; O’Hurley, G.;
+# [10] Love, M. I.; Anders, S.; Huber, W. Analyzing RNA-Seq Data with DESeq2, 2025.
+# [11] Danielsson, F.; Skogs, M.; Huss, M.; Rexhepaj, E.; O’Hurley, G.;
 # Klevebring, D.; Pontén, F.; Gad, A. K. B.; Uhlén, M.; Lundberg, E. Majority of
 # Differentially Expressed Genes Are down-Regulated During Malignant 
 # Transformation in a Four-Stage Model. Proceedings of the National Academy of 
 # Sciences 2013, 110 (17), 6853–6858. https://doi.org/10.1073/pnas.1216436110.
-# (11) Long, T.; Liu, Z.; Zhou, X.; Yu, S.; Tian, H.; Bao, Y. Identification of
+# [12] Long, T.; Liu, Z.; Zhou, X.; Yu, S.; Tian, H.; Bao, Y. Identification of
 # Differentially Expressed Genes and Enriched Pathways in Lung Cancer Using 
 # Bioinformatics. Molecular Medicine Reports 2019, 19 (3), 2029–2040. 
 # https://doi.org/10.3892/mmr.2019.9878.
-# (12) Jing, X. Ribosomal Proteins and Colorectal Cancer. Current Genomics 2007,
+# [13] Jing, X. Ribosomal Proteins and Colorectal Cancer. Current Genomics 2007,
 # 8 (1), 43–49. https://doi.org/10.2174/138920207780076938.
-# (13) Cao, J.; Cai, X.; Zheng, L.; Geng, L.; Shi, Z.; Pao, C. C.; Zheng, S. 
+# [14] Cao, J.; Cai, X.; Zheng, L.; Geng, L.; Shi, Z.; Pao, C. C.; Zheng, S. 
 # Characterization of Colorectal-Cancer-Related cDNA Clones Obtained by
 # Subtractive Hybridization Screening. Journal of Cancer Research and Clinical
 # Oncology 1997, 123 (8), 447–451. https://doi.org/10.1007/BF01372549.
-# (14) Bertucci, F.; Salas, S.; Eysteries, S.; Nasser, V.; Finetti, P.; 
+# [15] Bertucci, F.; Salas, S.; Eysteries, S.; Nasser, V.; Finetti, P.; 
 # Ginestier, C.; Charafe-Jauffret, E.; Loriod, B.; Bachelart, L.; Montfort, J.;
 # Victorero, G.; Viret, F.; Ollendorff, V.; Fert, V.; Giovaninni, M.; 
 # Delpero, J.-R.; Nguyen, C.; Viens, P.; Monges, G.; Birnbaum, D.; Houlgatte, R.
 # Gene Expression Profiling of Colon Cancer by DNA Microarrays and Correlation 
 # with Histoclinical Parameters. Oncogene 2004, 23 (7), 1377–1391.
 # https://doi.org/10.1038/sj.onc.1207262.
-# (15) Bai, R.; Li, D.; Shi, Z.; Fang, X.; Ge, W.; Zheng, S. 
+# [16] Bai, R.; Li, D.; Shi, Z.; Fang, X.; Ge, W.; Zheng, S. 
 # Clinical Significance of Ankyrin Repeat Domain 12 Expression in Colorectal
 # Cancer. Journal of Experimental & Clinical Cancer Research 2013, 32 (1), 35.
 # https://doi.org/10.1186/1756-9966-32-35.

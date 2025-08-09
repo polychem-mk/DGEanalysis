@@ -1,0 +1,1535 @@
+---
+title: Differential gene expression analysis of RNA sequencing data
+bibliography: bibliography.bibtex
+csl: citation_style.csl
+link-citations: true
+output:
+  html_document:
+    css: styles.css
+    df_print: paged
+    highlight: haddock
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+    code_fold: show
+---
+
+```{r setup_chunks, include=FALSE}
+knitr::opts_chunk$set( echo = TRUE, 
+                       message=FALSE, 
+                       warning=FALSE, 
+                       dpi = 100, 
+                       fig.height = 3,
+                       class.source = "code")
+```
+
+#                     Introduction             
+
+Understanding and predicting cancer susceptibility is an important topic in
+medicine and biology, requiring knowledge of genes associated with disease
+development. One way to identify these genes is to compare gene expression data
+in cancer patients and healthy individuals. Some genes become more active
+(up-regulated), while others have decreased expression (down-regulated), leading
+to disruption of biological pathways
+[@Transcriptional_landscape_cancers; @Identification_Genes_Colorectal_Cancer].
+
+The data required for such an analysis is RNA-seq data (gene expression data),
+typically in a matrix where the rows represent genes and the columns represent 
+samples. This matrix is also linked to a metadata table containing information
+about the experimental conditions or comparison groups. In the case of cancer
+research, this would be gene expression data in both tumor and normal (control)
+samples.
+
+In this project, we will explore the GSE68086 dataset using unsupervised machine
+learning algorithms and find differentially expressed genes using the DESEq2
+package.
+
+GSE68086 dataset is available from several Internet resources.   
+◦  [Expression Omnibus GEO platform](<https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE68086>).  
+
+There are two GSE68086 datasets on kaggle.com:  
+◦ the
+[first ](<https://www.kaggle.com/datasets/willianoliveiragibin/gene-expression-v2>)
+one contains counts and metadata in one file;     
+◦ and the
+[second](<https://www.kaggle.com/datasets/samiraalipour/gene-expression-omnibus-geo-dataset-gse68086>)
+one includes 4 files with counts and metadata in txt and
+csv formats, and will be used in this analysis.  
+There are also publications from ScienceDirect and Wiley on studies that used
+the GSE68086 dataset
+[@Construction_tumor_educated_RNAexpr; @Identification_seven_tumor_educated_RNAs; @RNA_Seq_Tumor_Educated_Cancer_Diagnostics].  
+  
+A detailed information on sample preparation, RNA processing and quality control
+is available on the on the
+[NCBI](<https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE68086>) website.
+The RNA reads counts obtained from the high-throughput sequencing experiment,
+collected sample are blood platelets, included 55 samples from healthy
+individuals ([HC]{.value_name}, control group) and 228 samples from patients
+with six different malignant tumors: non-small cell lung cancer
+([lung]{.value_name}), colorectal cancer  ([CRC]{.value_name}), pancreatic
+cancer ([pancreas]{.value_name}), glioblastoma ([GBM]{.value_name}), breast
+cancer ([breast]{.value_name}) and hepatobiliary carcinomas
+([hepatobiliary]{.value_name}). RNA reads were mapped to the hg19 reference
+genome (organism: Homo sapiens).
+
+#                     Libraries       
+
+```{r libraries}
+library(here)
+library(dplyr)     # data manipulation 
+library(tidyr)
+library(stringr)
+
+library(ggplot2)   # data visualization 
+library(pheatmap)  # heatmap plots
+library(vsn)       # meanSdPlot()
+
+library(gt)        # to make gt_table 
+library(patchwork) # combine multiple plots into a single layout
+
+# Bioconductor packages:
+library(sva)              # surrogate variable analysis 
+library(DESeq2)           # DE analysis
+library(AnnotationDbi)    # annotation packages
+library(org.Hs.eg.db)
+
+
+```
+
+#             Load data and variables                               
+
+```{r load} 
+
+# Load metadata
+metadata_processed <- readRDS(here::here("data/metadata_processed.rds"))
+
+# Load counts matrix
+counts_matrix <- readRDS(here::here("data/counts_matrix.rds"))
+
+# A custom function summarizes the results for DE analysis and returns:
+# - table with the top n differentially expressed genes; 
+# - summary and keywords; 
+# - ggplot for normalized counts.
+source(here::here("scripts/functions/DEresults.R"))
+
+# Settings for gt() function:
+print_gt <- function(dat, table_title = "", rownames = FALSE){
+  
+  if(all(!class(dat) %in% c("data.frame"))){
+    dat = as.data.frame(dat)
+  }
+  
+  gt(dat, rownames_to_stub = rownames) %>% 
+    tab_header(table_title) %>%
+    tab_options(table.align = "left",
+                table.font.size = 12,
+                table.font.names = "Helvetica",
+                heading.title.font.size = 14,
+                heading.align = "left",
+                column_labels.padding.horizontal = 4,
+                data_row.padding = 4,
+                table.border.top.color = "white",
+                table_body.hlines.color = "white",
+                table.border.bottom.width = 0.6,
+                column_labels.font.weight = "bold",
+                column_labels.border.top.width = 0.6,
+                column_labels.border.bottom.width = 0.6 )
+}
+
+# Colors for plots:
+plot_colors  = list(
+  batch = c("1" = "#6c8db1",  "2" =  "#b16c8a" ,"3" =  "#3CB371", 
+            "4" ="#87CEEB"  , "5" = "#FF8674" , "6" = "#ADFF2F"),
+  
+  mutational_subclass = c(HER2 = "#f7dc6f", wt = "#85929e",
+                          Triple_Negative = "#6ca05d", HER2_PIK3CA = "#b7950b",
+                          PIK3CA ="#db804f", KRAS = "#f941d7", MET = "#fbb7fb",
+                          EGFR_MET ="#6c408c", EGFR =  "#c0f1ea",
+                          KRAS_MET =   "#c7b9ff" ) ,
+  
+  cancer_type = c(breast = "#C11B17", hepatobiliary = "#5CB3FF",
+                  CRC = "#a629f5", GBM = "#a7d170", lung = "#f78909", 
+                  pancreas = "#0711fe", HC = "#474747"))
+
+
+# Labels for plots:
+labels_ct = list(HC = "HC (control)",
+                 breast = "breast", 
+                 CRC = "CRC", 
+                 GBM = "GBM",
+                 hepatobiliary = "hepatobiliary",
+                 lung = "lung",
+                 pancreas ="pancreas" )
+
+# Settings for ggplot.
+## Fonts:
+title_rel_size = 1
+axis_rel_size = 0.9
+legend_rel_size = 0.6
+
+# Themes:
+theme1 <- theme_light(base_size = 10,   base_family = "") +
+  theme(plot.title = element_text(size = rel(title_rel_size)), 
+        axis.title = element_text( size = rel(axis_rel_size)) )
+
+theme2 <- theme1 +
+  theme(legend.key.spacing.y =  unit(0.05, 'cm'),
+        legend.position = "bottom",
+        legend.byrow = TRUE,
+        legend.title = element_blank(),
+        legend.text = element_text(size = rel(legend_rel_size))  )
+
+theme3 <- theme_light(base_size = 10,   base_family = "") +
+  theme(plot.title = element_text(size = rel(title_rel_size)), 
+        axis.title = element_text( size = rel(axis_rel_size)),
+        axis.text.x = element_text(angle = 90),
+        axis.title.x = element_blank(),
+        legend.title = element_blank(),
+        legend.text = element_text(size = rel(legend_rel_size)) )
+
+```
+
+#             Exploratory data analysis    
+
+The source data contained 285 samples, but 2 samples were excluded due to low
+number of total reads counts.  
+Preliminary metadata cleaning steps included:  
+- extracting the [cancer_type]{.column_name}, [batch]{.column_name}, and
+[mutational_subclass]{.column_name} variables;  
+- removing unwanted characters (such as -, +, quotes, etc.);  
+- converting new variables into factors;  
+- row names were also added and set to the same order as the column names of
+the counts data.  
+  
+For the counts data the first non-numeric column was moved to the row names.
+
+The processed data were saved as rds files:
+[data/metadata_processed.rds]{.file_name}  and
+[data/counts_matrix.rds]{.file_name}.  
+
+##                 Counts data                                      
+
+[counts_matrix]{.data_name} contains RNA-seq count data for 57,736 genes and 283
+samples. 
+
+```{r dim_counts_matrix}
+dim(counts_matrix)
+```
+
+The values in [counts_matrix]{.data_name} represent the counts of RNA sequencing
+reads corresponding to specific genes and proportional to gene expression in the
+sample; row names are Ensembl gene identifiers.
+
+```{r counts_matrix}
+# First 5 rows for first 5 samples
+print_gt(counts_matrix[1:5, 1:5], rownames = TRUE)  
+```
+
+The distribution of gene counts for the first sample shows that a large
+proportion of genes have zero or low reads counts. For better visualization, we
+also plot the distribution of non-zero counts on a logarithmic scale: a small
+proportion of genes have a very large number of reads (from thousands to
+hundreds of thousands).
+
+```{r counts_histogram}
+
+# Histogram of the reads counts for 1 sample
+p1 <- counts_matrix %>%    
+  dplyr::select(X3.Breast.Her2.ampl ) %>%
+  ggplot(aes(x = X3.Breast.Her2.ampl  )) +   
+  geom_histogram(stat = "bin", bins = 100, fill = "#1f618d") +
+  labs(x = "Expression counts", y = "Number of genes", title = "All counts") +
+  theme1
+
+# Histogram of the reads counts that are greater than 0 for sample 1; 
+# the number of reads is on a logarithmic scale
+p2 <- counts_matrix %>%
+  dplyr::select(X3.Breast.Her2.ampl ) %>%
+  filter(X3.Breast.Her2.ampl >0) %>%
+  ggplot(aes(x = X3.Breast.Her2.ampl  )) +   
+  geom_histogram(stat = "bin", bins = 100, fill = "#1f618d") +
+  labs(x = "Expression counts in log scale", y = "Number of genes") +     
+  ggtitle("Non zero counts") +
+  scale_x_log10() +
+  theme1 + theme(plot.margin = margin(0, 0, 0, 30))
+
+p1 + p2 + 
+  plot_annotation(title = "Histograms of count data for the first sample",
+                  theme = theme(plot.title = element_text(size = rel(title_rel_size))))
+```
+
+##                 Metadata                                         
+
+In this analysis we use the processed data, [metadata_processed]{.data_name},
+that has the factor variables:  
+[cancer_type]{.column_name} ([HC]{.value_name}, [breast]{.value_name},
+[hepatobiliary]{.value_name}, [CRC]{.value_name}, [GBM]{.value_name},
+[lung]{.value_name}, [pancreas]{.value_name});   
+[batch]{.column_name} ([1  2  3  4  5  6]{.value_name});  
+[mutational_subclass]{.column_name} ([EGFR]{.value_name}, [EGFR_MET]{.value_name},
+[HER2]{.value_name}, [HER2_PIK3CA]{.value_name}, [KRAS]{.value_name},
+[KRAS_MET]{.value_name}, [MET]{.value_name}, [PIK3CA]{.value_name},
+[Triple_Negative]{.value_name}, [wt]{.value_name})  
+The row names are the same as column names of the [counts_matrix]{.data_name}.
+
+```{r metadata_processed}
+
+# Metadata for the first five samples
+print_gt(metadata_processed[1:5, ], rownames = TRUE)
+```
+
+
+The following bar charts show the distribution of values for the
+[cancer_types]{.column_name} variable, colored by mutation and batch. Each group
+contains more than 30 samples, except for [hepatobiliary]{.value_name} cancer.
+
+```{r cancer_types_barplot}
+
+# Bar plots of the  cancer types, colored by mutational subclass and batch
+p1 <- metadata_processed %>%
+  ggplot() +
+  geom_bar(aes(y = cancer_type, fill = mutational_subclass), width = 0.65) +
+  scale_fill_manual(values = plot_colors$mutational_subclass) +
+  labs(title = "Mutational subclass", y = "") +
+  scale_y_discrete(labels = labels_ct) +
+  theme2 +
+  theme(axis.text.y = element_text(size = 8), legend.key.size = unit(0.3, "cm"))
+
+p2 <- metadata_processed %>%
+  ggplot() +
+  geom_bar(aes(y = cancer_type, fill = batch), width = 0.65) +
+  scale_fill_manual(values = plot_colors$batch) +
+  labs(title = "Batch", y = "") +
+  theme2 +
+  theme(axis.text.y = element_blank(), legend.key.size = unit(0.3, "cm"))
+
+p1 + p2 
+
+```
+
+A large proportion of samples are wild type ([wt]{.value_name}), and the most
+common mutation in the data is [KRAS]{.value_name}, which is found in
+[pancreas]{.value_name}, [lung]{.value_name}, [hepatobiliary]{.value_name} and
+[CRC]{.value_name} samples. Mutations such as [Triple_Negative]{.value_name},
+[PIK3CA]{.value_name}, [HER2_PIK3CA]{.value_name} and [HER2]{.value_name} are
+specific to the [breast]{.value_name}, and [MET]{.value_name} and
+[KRAS_MET]{.value_name} are only in the [lung]{.value_name} cancer type.
+
+The graph on the left shows that there are 6 batches: batch 3 and 4 cover all
+cancer type categories; batch 2 covers all cancer type categories except
+[breast]{.value_name} cancer; batch 1 is only [GBM]{.value_name}, batch 5 and 6
+are missing from the control group ([HC]{.value_name}).
+
+##                 DESeqDataSet object                  
+
+There are two main goals in this part of analysis: first, we need to find
+sources of variability in the data to account for it when performing DGE
+analysis; and second, we want to check if all samples are similar (correlated)
+within [cancer_types]{.column_name} groups to detect potential outliers.  
+
+To explore patterns in this data, we will use unsupervised learning methods.  
+
+The [DESeqDataSetFromMatrix()]{.function_name} function creates a DESeqDataSet
+object and brings together all the components needed for further analysis:
+the raw counts matrix, the metadata, and a design formula.
+
+It is unlikely that there is no batch effect. But for now, we keep all the
+samples and set the design formula to [cancer_types]{.column_name} only.
+
+```{r dds1}
+# Create DESeq2 object 
+dds <- DESeqDataSetFromMatrix(countData = counts_matrix,
+                              colData = metadata_processed,
+                              design = ~ cancer_type)
+dds
+
+```
+
+##                 Count normalization                               
+
+The next step is to normalize the RNA-seq counts. This will make the data for
+different samples comparable despite different sequencing depths
+[@Exploring_effect_library_RNAsequencing; @Selecting_RNA_Seq_normalization].
+The [estimateSizeFactors()]{.function_name} function adds size factors to
+the DESeq2 object, which gives an estimate of the sequencing depth; the
+[sizeFactors()]{.function_name} function then allows access to the size factors.
+
+
+```{r size_factors}
+
+dds <- estimateSizeFactors(dds)    # add size factors to  the DESeq2 object
+
+# Data frame with size factors for each sample and total counts (column sums of 
+# the count data);  batch and sample name are added from the metadata 
+size_factors <- data.frame(size_factors = sizeFactors(dds),
+                           col_sums = colSums(counts(dds)),
+                           batch = metadata_processed$batch,
+                           sample = rownames(metadata_processed))
+
+# Scatterplot of size factors versus column sums
+p1 <- ggplot(data = size_factors, aes(x = size_factors, y = col_sums)) + 
+  geom_point(size = 1.5, shape = 1) +
+  geom_smooth(aes(x = size_factors, y = col_sums, colour = "lm"),
+              method = lm, se = FALSE, linewidth = 0.5) +
+  labs(x = "sizeFactors", y = "colSums", title = "Size factors vs. column sums") +
+  scale_color_manual(values = plot_colors$batch) +
+  theme1
+
+# Boxplots of size factors stratified by batch variable
+p2 <- ggplot(data = size_factors, aes(x = batch, y =  size_factors)) + 
+  geom_boxplot(fill = "#a9cce3") +
+  labs(y = "sizeFactors", title = "Size factors by batch") +
+  theme1 + theme(plot.margin = margin(0, 0, 0, 30))
+
+p1 + p2
+
+```
+
+For this dataset, size factors range from 0.2 to 2.5, and one sample has a size
+factor of about 4, possibly due to the 6 batches and large number of samples.
+
+```{r size_factors_max}
+print_gt(size_factors[which.max(size_factors$size_factors), ])
+
+```
+
+##                 Surrogate variable analysis (SVA)          
+
+To confirm the presence of the batch effect, we perform a surrogate variable
+analysis. SVA can be used to find hidden patterns in RNA-seq data and estimate
+surrogate variables. These surrogate variables can then be added to the model
+[@Surrogate_Variable_Analysis].
+However, in this project, we will only use SVA to demonstrate the presence of
+the batch effect.  
+We run SVA on the subset of the count matrix for genes with row means
+greater than 1. 
+
+```{r sva, results = "hide"}
+
+normalized_counts <- counts(dds, normalized = TRUE) # counts scaled by size factors
+
+ind <- rowMeans(normalized_counts) > 1  # indices for genes with row means > 1
+
+# Filter the matrix with normalized counts and keep genes with row average > 1
+normalized_counts <- normalized_counts[ind, ]
+
+# For SVA we build two models:
+# model that includes condition of interest
+model <- model.matrix(~cancer_type, colData(dds)) 
+
+# model removes the condition of interest
+model0 <- model.matrix(~1, colData(dds)) 
+
+# estimate surrogate variables
+svseq = svaseq(normalized_counts, model, model0, n.sv = 2)
+
+```
+
+The estimated surrogate variables are in the [sv]{.data_name} output of
+[svaseq()]{.function_name} function, and can be plotted and colored by batch and
+mutation subclass.
+
+```{r sva_plots, fig.height = 3.5}
+
+# Output of the svaseq() function with two surrogate variables:  
+head(svseq$sv)
+
+# data for SVA plots:
+sv = data.frame(sv1 = svseq$sv[ , 1], 
+                sv2 = svseq$sv[ , 2], 
+                batch = dds$batch,
+                mutational_subclass = dds$mutational_subclass)
+
+# SVA plot, colored by 'batch'
+p1 <- ggplot(data = sv, aes(sv1, sv2, colour = batch)) +    
+  geom_point(aes(colour = batch)) +
+  scale_color_manual(values = plot_colors$batch) +
+  ggtitle("Batch") +
+  theme2
+
+# SVA plot, colored by 'mutational_subclass'
+p2 <- ggplot(data = sv, aes(sv1, sv2, colour = batch)) +   
+  geom_point(aes(colour = mutational_subclass)) +
+  scale_color_manual(values = plot_colors$mutational_subclass)  +
+  ggtitle("Mutational subclass") +
+  theme2 + theme(plot.margin = margin(0, 0, 0, 30))
+
+p1 + p2 + 
+  plot_annotation(title = "Surrogate variable analysis plots",
+                  theme = theme(plot.title = element_text(size = rel(title_rel_size))))
+
+```
+
+The graph on the left shows that batches 5 and 6 are different from the batches
+present in the control samples; batches 2, 3, and 4 overlap, but are still
+fairly distinct groups; and there are only two samples for batch 1, one of
+which is close to batch 3 and the other to batch 2.
+
+The graph on the right shows that SVA did not detect any groups among the
+mutational subclasses: all mutations are mixed.  
+
+Given the presence of the batch effect, to conduct the DE analysis and to be
+able to compare the cancer groups with the control group, we leave only the
+batches included in the [HC]{.value_name} (control) cancer group, namely 2, 3
+and 4. We also remove the sample with size factor of about 4.
+
+```{r new_count_metadata}
+
+# indices for samples to be excluded from further analysis: sample with size 
+# factor 4 and samples from batches 1, 5 and 6
+samples_rm <- c(rownames(size_factors[which.max(size_factors$size_factors), ]),
+                rownames(size_factors[which(size_factors$batch %in% c("1", "5", "6")), ]) )
+
+samples_rm <- which(rownames(metadata_processed) %in% samples_rm) 
+
+# Filter count matrix and metadata 
+counts_matrix <- counts_matrix[ , -samples_rm]
+metadata_processed <- metadata_processed[ -samples_rm, ]
+
+# Drop unused levels  
+metadata_processed$batch <- droplevels(metadata_processed$batch)
+```
+
+##                 Variance Stabilization                                 
+
+The variance of gene expression (reads counts) tends to increase with increasing
+mean expression level and may influence the results of PCA or clustering
+analyses. To address this issue, we also apply variance stabilizing
+transformations. The DESeq2 package has several functions that perform these
+types of transformations [@DESeq2_vignettes]. 
+
+The functions [varianceStabilizingTransformation()]{.function_name} and
+[vst()]{.function_name} (a wrapper for the first function) compute the
+variance stabilizing transformation with respect to library size. The sample
+with the maximum size factor was dropped as well as batches 1, 5 and 6, this
+should narrow the range of size factors.  
+We will use [vst()]{.function_name} because it is faster to
+compute for 240 samples. For subsets, we will apply
+[varianceStabilizingTransformation()]{.function_name} function.
+
+```{r dds2}
+
+# Create a new DESeq2 object using only samples for the batches 2,3 and 4;
+# also add 'batch' to the design matrix
+dds <- DESeqDataSetFromMatrix(countData = counts_matrix,
+                              colData = metadata_processed,
+                              design = ~ batch + cancer_type)
+
+dds <- estimateSizeFactors(dds)    # add size factors to  the DESeq2 object;
+                                   # does not required for VST functions
+```
+
+We also set 'blind' argument to  FALSE.  
+From function manual: if many of genes have large differences in counts due
+to the experimental design, it is important to set 'blind = FALSE' for
+downstream analysis.
+
+```{r vst1}
+vsd <- vst(dds, blind = FALSE) # run variance stabilizing transformation  
+
+vsd_mat <- assay(vsd)          # and extract values
+
+# The first 5 samples after VST:
+print_gt(vsd_mat[1:5, 1:5], rownames = TRUE)
+```
+
+The scatter plots of the first two samples show that after applying the
+variance stabilizing transformation, the variance of gene counts decreased
+for genes with larger gene counts.
+
+On the Mean-Standard deviation plot the standard deviation for all
+samples reaches a plateau as the row mean increases.
+
+```{r meanSdPlot, fig.height = 2.3}
+
+# Scatter plots of the reads counts, Sample 1 vs Sample 2:
+# before transformation
+p1 <- ggplot(data = counts_matrix[ , 1:2],
+            aes(x = X3.Breast.Her2.ampl, y = X8.Breast.WT )) +
+  geom_point(size = 0.5, shape = 21, color = "#1f618d") + 
+  labs(x = "sample 1", y = "sample 2", title = "Before transformation") +
+  theme1
+
+# after VST
+p2 <- ggplot(data = vsd_mat[ , 1:2],
+             aes(x = X3.Breast.Her2.ampl, y = X8.Breast.WT )) +
+  geom_point(size = 0.5, shape = 21, color = "#1f618d") + 
+  labs(x = "sample 1", y = "sample 2", title = "After VST") +
+  theme1
+
+# Create mean vs. standard deviation plot for vst() output
+p3 <- meanSdPlot(vsd_mat, ranks = FALSE, plot = FALSE)
+
+p3 <- p3$gg + 
+  ggtitle("Row standard deviations vs.
+          row means") + 
+  ylim(c(0, 5)) +
+  theme1
+
+p1 + p2 + p3
+
+```
+
+##                 Correlation Heat map                             
+We want to find samples that are less correlated (or less than a certain
+threshold) within their group (cancer type). 
+A correlation heat map can give us an idea of how similar (or different)
+samples in a group are, and allows us to quickly spot outliers.  
+First we will look at the [HC]{.value_name} samples
+(control group in [cancer_types]{.column_name}),
+all of which are wild type (mutation subclass is [wt]{.value_name}).
+
+```{r cor_mat_HC}
+
+cor_mat <- cor(vsd_mat)  # correlation matrix 
+
+# Indices for control samples
+ind_HC <-  which(metadata_processed$cancer_type %in% c( "HC")) 
+
+cor_mat_HC = cor_mat[ind_HC, ind_HC]  # subset control samples
+
+```
+
+The heat map for control samples has column annotations with batch number.
+
+```{r pheatmap_HC, fig.dpi = 72, fig.asp = 0.7}
+
+# Create correlation heat map
+cor_mat_HC %>%
+  as.matrix() %>%
+  pheatmap(annotation_col = dplyr::select(metadata_processed, batch),
+           annotation_colors = list(batch = plot_colors$batch[c("2", "3","4")]),
+           show_rownames = FALSE,
+           show_colnames = FALSE,
+           fontsize = 8,
+           main = "Correlation heatmap for HC (control) samples")
+```
+
+Above, the SVA plot showed that about half of the samples from batch 2 are
+close to both batches 3 and 4, but there are many samples that form a group
+apart from the other batches. 
+
+In the heat map, the samples from batch 2 also formed two groups: one group is
+similar to almost all samples, and the other has a lower correlation with many
+samples.
+
+Let's find possible outliers: samples that have a correlation of less than
+0.8 with 4 or more samples.
+
+```{r low_cor}
+
+# Find samples that are less correlated within HC cancer_type group
+low_cor_ind = sapply(1:ncol(cor_mat_HC), function(j){
+  sum(cor_mat_HC[ , j] < 0.8) 
+})
+
+# Indices for samples that are less correlated with other samples in the HC group
+ind_rm_HC = which(rownames(metadata_processed) %in%  
+                    colnames(cor_mat_HC)[which(low_cor_ind >= 4)])
+
+# show these samples
+print_gt(metadata_processed[ind_rm_HC, ], rownames = TRUE)
+
+```
+
+Next we find outliers in the same way for each cancer type:
+
+```{r low_cor_all}
+
+# Levels of the variable cancer_type, except for "HC"
+cancer_types = setdiff(as.character(unique(metadata_processed$cancer_type)), "HC")
+
+# Find samples that are less correlated within their cancer_type group
+low_cor <- sapply(cancer_types, function(i){
+  ind = which(metadata_processed$cancer_type == i)   # indices for cancer_type i
+  
+  cor_mat_i = cor_mat[ind, ind]  # take a subset from the correlation matrix
+  
+  # number of samples with a correlation less than 0.8
+  low_cor_ind = sapply(1:ncol(cor_mat_i), function(j){
+    sum(cor_mat_i[ , j] < 0.8)
+  })
+  
+  # get sample names for samples that have a correlation less than 0.8 with 4 
+  # or more samples.
+  colnames(cor_mat_i)[which(low_cor_ind >= 4)]
+})
+
+low_cor
+
+# Indices for samples to be excluded from further analysis 
+ind_rm = which(rownames(metadata_processed) %in%  c(unlist(low_cor)))
+ind_rm = c(ind_rm, ind_rm_HC)
+
+```
+
+##                 Principal component analysis (PCA)               
+
+Finally, we can run the principal component analysis, and to make it simpler,
+we use the [plotPCA()]{.function_name} function and get the data for only the
+first two principal components.
+
+The vast majority of genes have zero or low counts, therefore we perform PCA
+on a subset of genes with higher variance across the samples.
+
+```{r PCA_plot}
+
+# Indices for genes with higher variance:
+ind_var <- sort(matrixStats::rowVars(vsd_mat[ , -c(ind_rm)]), decreasing = TRUE)[1:500]
+ind_var <- which(rownames(counts_matrix) %in% names(ind_var))
+
+vsd_sub <- vsd[ind_var , -ind_rm] # subset of the counts data after VST
+```
+
+The following [lapply()]{.function_name} function calculates PC1 and PC2 using
+the [plotPCA()]{.function_name} function for each batch (2 to 4).
+
+```{r vst_byBatch}
+
+pca_batch <- lapply(c("2", "3", "4"), function(i){
+  
+  ind_batch = which(vsd_sub$batch  == i)  # indices for batch i
+  
+  # PC1 and PC2 data for the counts after variance stabilizing transformation
+  suppressMessages({
+    vsd_sub[, ind_batch] %>%     
+      DESeq2::plotPCA(intgroup = c("cancer_type", "mutational_subclass"),
+                      pcsToUse = 1:2,
+                      returnData = TRUE) %>% 
+      mutate(batch = i)
+  })
+  
+}) %>% bind_rows()
+```
+
+From the PCA plots we see that [KRAS]{.value_name} and [EGFR_MET]{.value_name}
+form groups with some overlap, and [wt]{.value_name} is mixed with all
+mutations, just as all other mutations are mixed with [KRAS]{.value_name}.
+
+```{r PCA_mutational_subclass}
+
+# PCA plots faceted by batch and colored by mutational_subclass
+ggplot(data =  pca_batch, aes(x = PC1, y = PC2, colour = mutational_subclass))+
+  geom_point( size = 1.5) +
+  scale_color_manual(values = plot_colors$mutational_subclass) +
+  ggtitle("PCA plot, by batch and mutational subclass") +
+  facet_grid(. ~ batch, 
+             labeller = as_labeller(c("2" = "batch 2", "3" = "batch 3", "4" = "batch 4")) ) +
+  theme2 +
+  theme(strip.background = element_rect(fill="gray95"),
+        strip.text = element_text(colour = 'gray35')) 
+  
+```
+
+PCA analysis can separate the control samples ([HC]{.value_name}) from the
+cancer samples, but in batches 3 and 4, the [GBM]{.value_name} cancer group is
+close to or even mixed with the control samples, and in batch 2, the
+[lung]{.value_name} cancer group is slightly mixed with the control samples.
+Based on the PCA plots, similar gene profiles are likely to be observed between
+pancreatic cancer ([pancreas]{.value_name}), colorectal cancer
+([CRC]{.value_name}), and [breast]{.value_name} cancer.
+
+```{r PCA_cancer_type}
+
+# PCA plots faceted by batch and colored by cancer type
+ggplot(data =  pca_batch, aes(x = PC1, y = PC2, colour = cancer_type))+
+  geom_point( size = 1.5) +
+  scale_color_manual(values = plot_colors$cancer_type,
+                     labels = labels_ct) +
+  ggtitle("PCA plots, by batch and cancer type") +
+  facet_grid(. ~ batch, 
+             labeller = as_labeller(c("2" = "batch 2", "3" = "batch 3", "4" = "batch 4"))  ) +
+  theme2 +
+  theme(strip.background =element_rect(fill="gray95"),
+        strip.text = element_text(colour = 'gray35')) 
+```
+
+
+
+```{r filtered_metadata_counts}
+
+# Remove less correlated samples from metadata and counts matrix
+metadata_processed <- metadata_processed[-ind_rm, ]
+counts_matrix <- counts_matrix[ , -ind_rm]
+
+```
+
+#                Differential gene expression (DGE) analysis          
+
+GSE68086 is the large dataset, containing more than two groups to compare.
+One way is to use a subset for each cancer type and perform pairwise analyses.
+Another way is to use the DESeq2 package, which supports multi-factor designs,
+multi-level factors and experiments with many
+samples [@DESeq2; @DESeq2_vignettes].
+
+For DGE analysis, we create a new DESeqDataSet using the filtered count matrix
+[counts_matrix]{.data_name} and the metadata table
+[metadata_processed]{.data_name}.
+
+From PCA and SVA we know there is the batch effect, so we include it in our design
+formula, with [cancer_type]{.column_name}  last since that is the variable we
+are interested in. We also include [mutational_subclass]{.column_name}  even
+though PCA showed that all mutations are mixed with [wt]{.value_name}, but we
+see distinct  groups of [KRAS]{.value_name} and [EGFR_MET]{.value_name}
+mutations.
+
+```{r dds3}
+  
+dds <- DESeqDataSetFromMatrix(countData = counts_matrix,  # create DESeqDataSet
+                              colData = metadata_processed,
+                              design = ~ batch + mutational_subclass + cancer_type)
+```
+
+The [DESeq()]{.function_name} function performs differential gene expression
+analysis. DESeq2 workflow also includes shrinkage of log2 fold changes to
+improve the accuracy needed for gene visualization and ranking. There are two
+ways: (1) run [DESeq()]{.function_name} and perform shrinkage afterwards using
+function [lfcShrink()]{.function_name}
+(2) another way is to set the 'betaPrior' argument to TRUE [@DESeq2_vignettes].
+
+```{r DESeq}
+
+de <- DESeq(dds, betaPrior = TRUE )   #  Run analysis, ~5 min
+
+```
+
+The plot of dispersion estimates shows that dispersion decreases as the mean
+increases, and the raw dispersions follow the fitted line fairly well,
+indicating a reasonable fit of the data to the DESeq2 model.
+
+```{r plotDispEsts, fig.dpi = 72, fig.asp = 0.7}
+
+plotDispEsts(de, cex = 0.5, legend = FALSE)   # plot the dispersion estimates
+
+```
+
+#                Results                                   
+
+We first look at the results for one cancer type, CRC (contrast set to
+[CRC]{.value_name} and [HC]{.value_name}), and set alpha to 0.01 so that results
+for adjusted p-values less than 0.01 are colored in the MA and Volcano plots.
+
+```{r res_CRC}
+res_CRC <- results(de,                            # extract results for CRC           
+                   contrast = c("cancer_type", "CRC", "HC"),
+                   alpha = 0.01)
+
+```
+
+There are a lot more down-regulated genes (19%) than up-regulated (~2%)
+
+```{r summary_res_CRC}
+summary(res_CRC)
+
+```
+
+##                 MA plot and Volcano plot                
+
+There are two types of graphs that visualize the log2 fold change in gene
+expression in one group of samples (cancer) compared to another (control).
+The MA plot is a scatterplot with the log2 fold changes on the y-axis and the
+mean of the normalized counts on the x-axis. The Volcano plot displays the
+log2 fold changes on the x-axis against statistical significance (p-values or
+adjusted p-values) on y-axis.
+
+```{r MA_Volcano_data}
+
+p1 = DESeq2::plotMA(res_CRC, returnData = TRUE)  # data for MA plot 
+
+p1 = p1 %>%                    # ggplot for the for MS plot
+  ggplot(aes(x = mean + 0.001, # add 0.001 to avoid infinite values
+             y = lfc,
+             color = isDE)) +
+  geom_point(size = 0.8, alpha = 0.8) +
+  # The DESeq2::plotMA() function displays the results in logarithmic scale,  
+  # but for the ggplot we need to add a logarithmic x-axis scale.
+  scale_x_log10() +
+  scale_color_manual(values = c("gray", "blue")) +
+  guides(color = "none") +
+  labs(x = "mean of normalized counts",
+       y = "log fold change",
+       title = "MA plot") +
+  theme1
+
+res_CRC <- res_CRC %>%       # data for Volcano plot
+  as.data.frame() %>%
+  mutate(threshold = padj < 0.01)
+
+p2 <- res_CRC %>%            # ggplot for Volcano plot
+  ggplot(aes(x = log2FoldChange, 
+             y = -log10(padj),
+             color = threshold)) +
+  geom_point(size = 0.8, alpha = 0.8) +
+  labs(title = "Volcano plot", 
+       x = "log2 fold change",
+       y = "-log10 adjusted p-value") +
+  guides(color = "none") +
+  scale_color_manual(values = c( "gray", "blue")) +
+  theme1 + theme(plot.margin = margin(0, 0, 0, 30))
+```
+
+The MA and Volcano plots show this trend: there are more values with negative
+log fold change values corresponding to p-values less than 0.01.
+
+If we check the relevant publications, we can find articles that report that
+more of differentially expressed genes are down-regulated in cancer cell
+samples; however, the difference is not as significant as in these data
+[@Majority_differentially_expressed_downRegulated; @Identification_differentially_expressed_lungCancer].
+
+```{r MA_Volcano_plot, fig.height = 2.8}
+p1 + p2
+```
+
+##                 Annotation                              
+
+Adding the gene name and gene type can help to understand which types of genes
+are expressed differently and compare the results with literature data.
+
+For this purpose, we use the [org.Hs.eg.db]{.db_name} package to add
+[SYMBOL]{.column_name}, [GENENAME]{.column_name} and [GENETYPE]{.column_name}
+to the results table with top 20 differently expressed genes, by
+[ENSEMBL]{.column_name}  (Ensembl id). [Hs.eg.db]{.db_name} is an organism
+specific annotation package for Human genome.
+
+We take results with adjusted p-values less than 0.01 and order them by the
+absolute value of the [stat]{.column_name} (Wald statistic), which is the
+[log2FoldChange]{.column_name} divided by [lfcSE]{.column_name}, to find
+results corresponding to larger log fold changes and smaller standard errors.
+
+```{r annotation}
+
+# Add variable ENSEMBL which will be used to match records from org.Hs.eg.db
+res_CRC$ENSEMBL <- rownames(res_CRC) 
+
+res_CRC <- res_CRC %>%       # results for top 20 differently expressed genes
+  filter(padj < 0.01) %>%
+  arrange(desc(abs(stat))) %>%
+  slice_head(n = 20)
+
+ensembl_ids = res_CRC$ENSEMBL     # Ensembl ids for top 20 genes
+
+# Annotation data for Ensembl identifiers in res_CRC
+ann_data <- AnnotationDbi::select(org.Hs.eg.db, 
+                                  keys = ensembl_ids, 
+                                  # columns from org.Hs.eg.db:
+                                  columns = c("SYMBOL", "GENENAME", "GENETYPE" ),
+                                  keytype = "ENSEMBL")
+res_CRC <- res_CRC %>%    # add symbol, gene name and gene type to 'res_CRC'
+  left_join(ann_data, by = "ENSEMBL")
+
+res_CRC %>%                # show first 6 results
+  dplyr::select(SYMBOL, GENENAME, GENETYPE, padj,
+                baseMean, log2FoldChange, lfcSE, stat) %>%
+  print_gt() %>%
+  opt_interactive(page_size_default = 5)
+
+```
+
+
+Most of these genes are protein coding, and there are many ribosomal proteins.  
+
+```{r res_CRC_props}
+
+# Proportion of protein coding genes in the results table
+sum(str_detect(res_CRC$GENETYPE, "protein-coding"), na.rm = TRUE)/length(res_CRC$GENETYPE)
+
+# Proportion of genes in the results table encoding ribosomal proteins
+sum(str_detect(res_CRC$GENENAME, "ribosomal"), na.rm = TRUE)/length(res_CRC$GENETYPE)
+
+```
+
+##                 plotCounts                              
+
+The [plotCounts()]{.function_name} function (DESeq2) plots the normalized counts
+for a single gene. We can look at one gene that is differentially expressed in
+[CRC]{.value_name}, but make a plot for all cancer types.
+
+```{r plotCounts_one_gene}
+
+ind <- res_CRC$ENSEMBL[2]    # index for one gene from the results table for CRC
+
+plot_title <- paste("Normalized counts of ", ind, " gene, by batch and cancer_type" , sep = "")
+
+# Plot  normalized counts for one gene for all groups in the cancer_type 
+# and color by batch
+set.seed(1)
+plotCounts(dds,
+           ind, 
+           intgroup = "cancer_type",
+           returnData = TRUE)  %>%
+  bind_cols(batch = metadata_processed$batch,
+            mutational_subclass = metadata_processed$mutational_subclass) %>%
+  ggplot(aes(x = cancer_type, y = count, colour = batch)) +
+  geom_jitter(width = 0.3, size = 2, shape = 16, alpha = 0.5) +
+  stat_summary(fun.data = mean_sdl,
+               position = position_dodge(width = 0.5),
+               linewidth = 1.1) +
+  # The plotCounts() function displays the results in logarithmic scale,  
+  # but for the ggplot we need to add a logarithmic y-axis scale.
+  scale_y_log10() +
+  scale_color_manual(values = plot_colors$batch) +
+  scale_x_discrete(labels = labels_ct) +
+  ggtitle(plot_title) + theme3
+
+```
+
+Overall, batch 2 has lower means and higher standard deviations. Batches 3 and
+4 are more similar, however, in the PCA plot, batch 4 showed better separation
+of cancer types, so for further analysis we will focus on the results for
+samples from batch 4.
+
+
+The following graph is a plot of normalized counts for the top 20 differentially
+expressed  genes in [CRC]{.value_name} group (Ensembl identifiers have been
+replaced by gene symbols ([SYMBOL]{.column_name})).
+
+```{r plotCounts_crc}
+
+# Get data using plotCounts() function for all 20 genes in the results table for CRC:
+res_CRC_plot <- lapply(res_CRC$ENSEMBL, function(i){
+  
+  plotCounts(dds, i, intgroup = "cancer_type", returnData = TRUE)  %>%
+    # add batch and mutational_subclass variables from metadata_processed:
+    bind_cols(batch = metadata_processed$batch,
+              mutational_subclass = metadata_processed$mutational_subclass) %>%
+    filter(cancer_type %in% c( "CRC", "HC"), batch == "4") %>%
+    mutate(ENSEMBL = i)
+  
+}) %>% bind_rows()
+
+# Add Ensembl IDs:
+res_CRC_plot <- res_CRC_plot %>%
+  left_join(res_CRC[ , c("ENSEMBL", "SYMBOL")]) %>%
+  mutate(SYMBOL = ifelse(is.na(SYMBOL), ENSEMBL , SYMBOL))
+
+# Make a plot:
+set.seed(1)
+ggplot(res_CRC_plot, aes(x = SYMBOL , y = count, colour = cancer_type)) +
+  geom_jitter(width = 0.3, size = 2, shape = 16, alpha = 0.5) +
+  stat_summary(fun.data = mean_sdl,
+               position = position_dodge(width = 0.2),
+               linewidth = 1.1) +
+  scale_y_log10() +
+  scale_color_manual(values = c("#5d6d7e" , "#F08080" ),
+                     labels = c("HC (control)", "CRC") ) +
+  labs(x = "" , y = "normalized counts", title = "Cancer type CRC, top 20 genes") +
+  theme3
+
+```
+
+We can compare these results with the available publications, keeping in mind
+that the GSE68086 RNA-seq data are obtained from blood samples, whereas many
+available publications typically study tumor tissue.
+
+
+For example, RP genes (ribosomal proteins) are significantly down-regulated in
+CRC cancer samples for this dataset. There are studies showing increased
+expression of RP genes in CRC samples,[@Ribosomal_Proteins_Colorectal_Cancer]
+while other studies found that RP genes are down-regulated.
+ [@Characterization_CRC_subtractive_hybridization_screening; @Gene_expr_profiling_CRC_histoclinical_parameters]
+
+```{r res_CRC_RP}
+
+# A subset of the results table that includes only RP genes:
+res_CRC %>% 
+  dplyr::select(log2FoldChange, SYMBOL, GENENAME) %>%
+  arrange(SYMBOL) %>%
+  filter(str_detect(SYMBOL, "RP")) %>%
+  print_gt()
+
+```
+
+Even greater log-fold change in ANKR (ankyrin repeat domain) gene expression.
+And we can find articles reporting that ANKR (ankyrin repeat domain) mRNA
+expression is significantly lower in CRC tumor tissues than in control
+samples[@Clinical_significance_Ankyrin_CRC]. 
+
+```{r res_CRC_ANKR}
+
+# A subset of the results table that includes only ankyrin genes:
+res_CRC %>% 
+  dplyr::select(log2FoldChange, SYMBOL, GENENAME) %>%
+  arrange(SYMBOL) %>%
+  filter(str_detect(SYMBOL, "ANKR")) %>%
+  print_gt()
+
+```
+
+##                 DEresults                               
+
+Now let's look at other cancer types, but put the above code into a custom
+function [DEresults()]{.function_name}, that returns:  
+- table with top n differentially expressed genes (genes with padj less than 
+'alpha' and ordered by 'sort.by' argument, which is "stat" or "padj" or
+"log2FoldChange");  
+- summary and keywords for these genes;   
+- ggplot for normalized counts filtered for the specified batch (or all
+batches if 'batch=NULL').   
+
+The [DEresults()]{.function_name} function shows the results for all batches.
+It does not rerun the [DESeq()]{.function_name} function, but only retrieves
+the results. However, the data for the normalized values plot can be filtered
+using the 'batch' argument.  
+  
+The lung cancer results also indicate that the vast majority of differentially
+expressed genes are down-regulated and protein coding.
+
+```{r DEresults_lung}
+
+# Get top 20 results for lung cancer type using custom function DEresults()
+DEresults_lung <- DEresults(de = de,
+                            md = metadata_processed ,
+                            level.1 = "HC",     # contrast level 1 (control)
+                            level.2 = "lung",   # contrast level 2
+                            alpha = 0.01,       # cut off for padj
+                            batch = 4,          # batch number or NULL
+                            # sort results by "stat", "padj"  or "log2FoldChange"
+                            sort.by = "stat",   
+                            n = 20              # number of results
+                            )
+
+DEresults_lung[[3]]  # normalized counts plot 
+DEresults_lung[[2]]  # summary and keywords 
+
+```
+
+About 41% of the genes in GSE68086 do not have a corresponding
+[GENETYPE]{.column_name} in the [org.Hs.eg.db]{.db_name} database. 
+
+```{r gene_types_all}
+
+# Data frame for all gene types corresponding to genes in the GSE68086 dataset
+gene_types_all <- AnnotationDbi::select(org.Hs.eg.db, 
+                      keys = rownames(counts_matrix), 
+                      columns = "GENETYPE" ,
+                      keytype = "ENSEMBL")  %>%
+  # org.Hs.eg.db may have more than one row per Ensembl ID, so keep only
+  # the first match.
+  distinct(ENSEMBL, .keep_all = TRUE)
+
+mean(is.na(gene_types_all$GENETYPE))  # proportion of the missing values
+```
+
+But we can compare the distribution of the available gene types in the entire
+dataset and those genes that are differentially expressed. The
+[org.Hs.eg.db]{.db_name} contains about 55.8% protein-coding genes (shown in
+gray), while differentially expressed genes are mainly protein-coding genes:
+85% for CRC samples and more than 90% for lung cancer samples (shown in blue).
+
+```{r gene_type_plot, fig.height = 3.5}
+
+# Drop NAs in 'gene_types_all' data frame and count gene types:
+gene_types_all <- gene_types_all %>%
+  drop_na() %>%
+  group_by(GENETYPE) %>%
+  summarise(n = n()) %>%
+  ungroup() %>% 
+  mutate(prop = round(n/sum(n), 4))
+
+# "DEresults_lung[[2]][[2]]" is a table that contains the number of gene types 
+# for genes with padj values less than 0.01 (alpha)
+gene_types_de <- DEresults_lung[[2]][[2]] %>%  
+  # n is the number of gene types regardless of up or down regulation:
+  mutate(n = up + down) 
+
+# Plot: proportions of gene types in org.Hs.eg.db and differentially expressed
+# genes in lung cancer type
+p1 <- ggplot(data = gene_types_all) + 
+  geom_col(aes(x = GENETYPE, y = n/sum(n)), 
+           fill = "gray", width = 0.4, just = 0.5) +
+  geom_col(data = gene_types_de,
+           aes(x = gene.type, y = n/sum(n)),
+           fill = "steelblue", width = 0.4, just = -0.5) +
+  labs(y = "proportion of genes", x = "gene type",
+       title = "Proportion of gene types in org.Hs.eg.db (gray) \ncompared to proportion of differentially \nexpressed genes (blue)in lung cancer samples") +
+  guides(fill = "none") + 
+  theme1 + theme(plot.margin = margin(0, 50, 0, 0),
+                 axis.text.x = element_text(angle = 90))
+
+p1 + 
+  print_gt(gene_types_all,
+           table_title = "Proportions of gene types in org.Hs.eg.db")
+```
+
+##                 pheatmap                                
+
+The heat map allows us to see the big picture. For clearer visualization, we
+extract results for the top 30 differentially expressed genes for all cancer
+types and then create a heatmap for a subset of samples from batch 4.
+
+```{r DEresults_all}
+
+# Levels of the variable cancer_type, except for "HC"
+cancer_types = setdiff(as.character(unique(metadata_processed$cancer_type)), "HC")
+
+# Get top 30 results for all cancer_type groups
+DEresults_all <- lapply(cancer_types, function(i){  # takes ~1 minute
+  DEresults(de = de,
+            md = metadata_processed ,
+            level.1 = "HC",
+            level.2 = i,
+            alpha = 0.01,
+            batch = 4,
+            n = 30  )
+})
+
+# Unique Ensembl IDs from 'DEresults_all':
+gene_ids <- lapply(1:6, function(i){
+  DEresults_all[[i]][[1]]$ENSEMBL
+  }) %>% unlist() %>% unique()
+
+batch_ind <- which(metadata_processed$batch == "4") # indices for batch 4
+
+```
+
+We get a total of 103 unique genes, meaning that there are genes that are common
+to at least two cancer types.
+
+```{r unique_genes_n}
+
+# There are only 103 unique genes; many genes are common to several types of
+# cancer.
+length(gene_ids)
+
+```
+
+We take a subset of counts after the variance stabilizing transformation that
+includes samples from batch 4 and the 103 differentially expressed genes
+identified above. To create a more uniform heat map, we subtract the row means
+from the resulting matrix.
+
+```{r pheatmap_b4, fig.height 5}
+
+# Apply variance stabilizing transformation
+vst <- varianceStabilizingTransformation(dds) %>% assay()
+ 
+# Filter normalized count matrix for batch 4 and differentially expressed genes
+vst <- vst[gene_ids, batch_ind] 
+vst <- vst - rowMeans(vst)
+
+# Data frame with metadata for the batch 4:
+metadata_b4 = metadata_processed[batch_ind, ]
+
+# Make a heat map
+pheatmap(vst, 
+         fontsize = 8,
+         show_rownames = FALSE,
+         show_colnames = FALSE,
+         annotation_col = dplyr::select(metadata_b4, cancer_type),
+         annotation_colors = plot_colors)
+```
+
+
+In this heat map, samples are in columns and genes are in rows. Blue indicates
+genes with decreased expression, and red indicates genes with increased expression.
+The controls ([HC]{.value_name}) are well defined, but the [GBM]{.value_name}
+samples are closer to them and even mixed with them. Thus, it is likely more
+difficult to identify genes that will differ significantly between the
+[GBM]{.value_name} and controls. In addition, the cancer types are quite mixed
+with each other, although [lung]{.value_name}, [CRC]{.value_name}, and
+[breast]{.value_name} tend to cluster more.
+
+Normalized counts of top genes overlap more in case of [GBM]{.value_name}
+samples for batch 4.
+
+```{r plotCounts_gbm}
+
+# Make the normalized counts plot for GBM 
+DEresults_all[[which(cancer_types == "GBM")]][[3]]
+```
+
+(a better separation in normalized counts if we make the same graph for batch 2)
+
+Compared to [CRC]{.value_name} and [lung]{.value_name} cancer types, the ratio
+of down to up regulated genes in [GBM]{.value_name} is not as high. More over,
+most of the top 20 genes are up-regulated.
+
+```{r results_all_up_down}
+# Summary showing the number of differentially expressed genes and the 
+# percentage of up- and down-regulated genes
+DEresults_all[[which(cancer_types == "GBM")]][[2]][[1]]
+
+```
+
+##               Compare all results                              
+
+The [DEresults_all]{.data_name} list contains results for the six cancer types.
+The following summary shows the percentage of genes that are up- and
+down-regulated. Given that we found a lot of RP (ribosomal protein) and ANKRD
+(ankyrin repeat domain) genes, let's add how many of these genes are present in
+the top 30 results for all cancer types. We can also look at the main keywords
+extracted from the gene names.
+
+```{r summary}
+
+# Summary table
+lapply(1:6, function(i){
+  
+  # The second element of the DEresults() output contains a summary of all
+  # differentially expressed genes (not just the top results) that correspond to 
+  # results with a p-value less than 0.01.
+  up = sum(DEresults_all[[i]][[2]][[2]]$up)    # number of up-regulated genes 
+  down = sum(DEresults_all[[i]][[2]][[2]]$down) # number of down-regulated genes 
+  n = up+down
+  
+  # The first element of the DEresults() output is a table with the top n 
+  # results, so we look at the number of RP and ANKRD genes in that table:
+  ribosomal_protein = sum(str_detect(DEresults_all[[i]][[1]]$GENENAME,
+                                     "ribosomal protein"),
+                          na.rm = TRUE)
+  ankyrin = sum(str_detect(DEresults_all[[i]][[1]]$GENENAME,
+                                     "ankyrin"),
+                          na.rm = TRUE)
+  
+  data.frame(cancer_type = cancer_types[i],
+             up = round(100*up/n, 2),
+             down = round(100*down/n, 2) ,
+             ribosomal_protein = ribosomal_protein,
+             ankyrin = ankyrin,
+             keywords = toString(DEresults_all[[i]][[2]][[3]][1:10]))
+}) %>%
+  bind_rows() %>%
+  print_gt()
+
+```
+
+Most of the differentially expressed genes found in this analysis are
+down-regulated. For [CRC]{.value_name}, [lung]{.value_name} and
+[pancreas]{.value_name}, about half of the genes in the top results are RP genes.
+
+Some top differentially expressed genes are found in more than one cancer type.
+Let's look at genes that are common to 4 or more types of cancer.
+
+```{r gene_by_ct}
+
+# Calculate the frequency of occurrence of the top genes in all types of cancer:
+gene_by_ct <- sapply(1:6, function(i){
+  
+  # Ensembl IDs (ENSEMBL) for top genes are in 'gene_ids'
+  sapply(gene_ids, function(j){
+    as.numeric(j %in% DEresults_all[[i]][[1]]$ENSEMBL  )
+  }) 
+}) %>% as.data.frame()
+
+# The row sums shows how many times each gene from the 'gene_ids' vector occurred 
+# across all cancer types
+rs <- rowSums(gene_by_ct)
+
+# Add column names to 'gene_by_ct': order of cancer_type in 'DEresults_all' is
+# same as in 'cancer_types' defined above
+colnames(gene_by_ct) <- cancer_types
+ 
+gene_by_ct$rs <- rs  # add row sums variable
+
+gene_by_ct$ENSEMBL <- rownames(gene_by_ct) # add ENSEMBL variable
+
+# Annotation data for Ensembl identifiers in res_CRC
+ann_data <- AnnotationDbi::select(org.Hs.eg.db, 
+                                  keys = gene_by_ct$ENSEMBL, 
+                                  # columns from org.Hs.eg.db:
+                                  columns = c("SYMBOL", "GENENAME", "GENETYPE" ),
+                                  keytype = "ENSEMBL") %>%
+  distinct(ENSEMBL, .keep_all = TRUE)  # keep the first match for Ensembl ID
+
+gene_by_ct <- gene_by_ct %>%    # add symbol, gene name and gene type to 'gene_by_ct'
+  left_join(ann_data, by = "ENSEMBL") %>%
+  # if SYMBOL is missing, replace it with ANSEMBL
+  mutate(SYMBOL = ifelse(is.na(SYMBOL), ENSEMBL, SYMBOL))
+
+```
+
+The following table shows that [GBM]{.value_name} has only one gene in common
+with other cancer types, while the other 5 cancer types have many genes in
+common. The ANKRD and RP genes are again present in this table.
+
+```{r gene_by_ct_4}
+
+gene_by_ct %>% 
+  filter(rs >=4) %>%  # filter genes common to at least 4 cancer types
+  dplyr::select(SYMBOL,GENENAME, breast, hepatobiliary,CRC,GBM,lung, pancreas) %>%
+  arrange(SYMBOL) %>%
+  print_gt()
+
+```
+
+The following genes appeared only for one cancer type:
+
+```{r gene_by_ct_1}
+sapply(1:6, function(i){
+  genes = gene_by_ct$SYMBOL[which(gene_by_ct$rs == 1 & gene_by_ct[, i] == 1)]
+  paste(cancer_types[i], ": ", toString(sort(genes)), sep = "")
+})
+
+```
+
+Let's plot a correlation heat map for [gene_by_ct]{.data_name} (the
+distribution of the top 103 genes across all [cancer_type]{.column_name}
+groups) and add the number of common genes.
+
+```{r pheatmap_ct_genes, fig.height = 3.5, fig.width = 4.5}
+
+# Get numeric columns from 'gene_by_ct' and convert them to matrix
+n_common_genes <- as.matrix(gene_by_ct[ , 1:6] == 1)  
+
+# Determine the number of common genes across all cancer types (from top 30 
+# results)
+n_common_genes <- crossprod(n_common_genes) 
+
+# Create heat map
+pheatmap(cor(gene_by_ct[,1:6]), 
+         display_numbers = n_common_genes )
+
+```
+
+In terms of gene expression, these data suggest that the [pancreas]{.value_name}
+and [CRC]{.value_name} samples are similar and [GBM]{.value_name} is the least
+similar to other cancer types in this dataset.  
+
+We can set 'level.1' to another cancer type and compare the normalized counts
+for two cancer types. 
+
+The following graph shows that there are very few differentially expressed
+genes for [CRC]{.value_name} and [pancreas]{.value_name} and the counts overlap.
+
+```{r DEresults_CRC_panc}
+# alpha set to 0.05 to find more genes
+DEresults_CRC_panc <- DEresults(de = de,
+                                md = metadata_processed ,
+                                level.1 = "CRC",   
+                                level.2 = "pancreas",
+                                alpha = 0.05,
+                                sort.by = "log2FoldChange",
+                                batch = 4,
+                                n = 20 )
+DEresults_CRC_panc[[3]]
+```
+
+We can get better results for hepatobiliary and lung because there are much
+fewer common differentially expressed genes.
+```{r DEresults_hep_lung}
+DEresults_hep_lung <- DEresults(de = de,
+                                  md = metadata_processed ,
+                                  level.1 = "hepatobiliary",   
+                                  level.2 = "lung",
+                                  alpha = 0.01,
+                                  sort.by = "log2FoldChange",
+                                  batch = 4,
+                                  n = 20 )
+
+DEresults_hep_lung[[3]]
+```
+
+#                Summary                                 
+
+The GSE68086 datasets contain counts of RNA reads for 285 samples and 57,736
+genes. These data are from a high-throughput sequencing experiment and include
+55 samples from healthy individuals ([HC]{.value_name}, control group) and 228
+samples from patients with six different cancer types: lung cancer, colorectal
+cancer, pancreatic cancer, breast cancer, glioblastoma, and hepatobiliary
+carcinoma.  
+
+•  The main variables that can be extracted from the raw metadata file are batch
+number ([batch]{.column_name}), cancer type ([cancer_type]{.column_name}),
+and mutation subclass ([mutational_subclass]{.column_name}).  
+
+&nbsp;&nbsp;&nbsp;&nbsp; ◦ 61.1% of the samples are wild type
+([wt]{.value_name}), which is found in all cancer groups. The most common
+mutation in the data is the [KRAS]{.value_name} (22.3%), which is found the
+[pancreas]{.value_name}, [lung]{.value_name}, [hepatobiliary]{.value_name},
+and [CRC]{.value_name} samples. Mutations such as
+[triple_negative]{.value_name}, [PIK3CA]{.value_name},
+[HER2_PIK3CA]{.value_name} and [HER2]{.value_name} are specific to
+[breast]{.value_name} cancer, and [MET]{.value_name} and [KRAS_MET]{.value_name}
+are found only in the [lung]{.value_name} cancer group.  
+
+&nbsp;&nbsp;&nbsp;&nbsp;◦ All samples were obtained in 6 batches, however only
+batches 2, 3 and 4 are present in the control group ([HC]{.value_name}).  
+
+&nbsp;&nbsp;&nbsp;&nbsp;◦ During the cleaning/filtering process, 53 samples were
+discarded, including two samples with low reads counts, samples that were less
+correlated within their [cancer_type]{.column_name} group, and batches 1, 5,
+and 6.   
+
+• The [counts_matrix]{.data_name} that was used as input to the
+[DESeq()]{.function_name} function contained the raw counts of RNA sequencing
+reads corresponding to 57,736 genes and 232 samples.  
+
+&nbsp;&nbsp;&nbsp;&nbsp;◦ About 50% of these genes have 0 raw counts.  
+
+&nbsp;&nbsp;&nbsp;&nbsp;◦ Before applying unsupervised machine learning methods,
+count normalization and a variance stabilizing transformation were applied
+(DESeq2 [vst()]{.function_name} function was used for the entire dataset and
+[varianceStabilizingTransformation()]{.function_name} for a subset).   
+
+• Surrogate variable analysis (SVA) and Principal component analysis (PCA)
+showed the presence of the batch effect.   
+
+• Differential gene expression analysis was performed using the
+[DESeq()]{.function_name}  function, and the 'betaPrior' argument was set to
+TRUE to obtain shrunken estimates. The design formula included
+[batch]{.column_name}, [mutational_subclass]{.column_name} and
+[cancer_type]{.column_name}.   
+
+• The results were extracted using the [results()]{.function_name} function
+and the [DEresults()]{.function_name} user function.  
+
+&nbsp;&nbsp;&nbsp;&nbsp;◦ We observe an increase in the proportion of
+protein-coding genes among differentially expressed genes.  
+
+&nbsp;&nbsp;&nbsp;&nbsp;◦ For all cancer types, there are more down-regulated
+genes than up-regulated genes, but for [GBM]{.value_name} this difference is
+smaller than for the other 5 cancer types in this dataset.  
+
+&nbsp;&nbsp;&nbsp;&nbsp;◦ If we take the 30 genes with the highest differential
+expression for each cancer type, we get a total of 103 unique genes, since there
+are genes that are common to at least two cancer types.   
+
+&nbsp;&nbsp;&nbsp;&nbsp;◦ For [CRC]{.value_name}, [lung]{.value_name} and
+[pancreas]{.value_name}, about half of the genes in the top results are
+ribosomal protein genes.   
+
+&nbsp;&nbsp;&nbsp;&nbsp;◦ In the top results for [CRC]{.value_name} and
+[pancreas]{.value_name}, 24 out of 30 genes are the same, indicating similar
+gene expression profiles for these cancer types. PCA plots also indicate
+similarities between [CRC]{.value_name} and [pancreas]{.value_name} samples.   
+
+&nbsp;&nbsp;&nbsp;&nbsp;◦ Gene expression in [GBM]{.value_name} samples differed
+least from control samples among all cancer types in this dataset.  
+
+#  References 
+
+<div id="refs"></div>
+  
+<hr style="border:0.8px solid #DCDCDC">  
+
+#                sessionInfo                                
+
+**R version** 4.4.3 (2025-02-28)
+
+**Attached base packages**:  
+
+|                          |                    |                        |
+|--------------------------|:-------------------|:-----------------------|
+| stats4                   | stats              |  graphics              |
+| grDevices                | utils              |  methods               |
+| base                     |                    |                        |
+
+
+**Other attached packages**:
+
+|                    |                             |                     |
+|---------------------|:---------------------------|:--------------------|
+|org.Hs.eg.db_3.20.0  |AnnotationDbi_1.68.0        |tidyr_1.3.1          |
+|DESeq2_1.46.0        |SummarizedExperiment_1.36.0 |MatrixGenerics_1.18.1|
+|matrixStats_1.5.0    |GenomicRanges_1.58.0        |GenomeInfoDb_1.42.3  |
+|IRanges_2.40.1       |S4Vectors_0.44.0            |sva_3.54.0           |          
+|BiocParallel_1.40.2  |genefilter_1.88.0           |mgcv_1.9-3           |
+|nlme_3.1-168         |patchwork_1.3.1             |gt_1.0.0             |
+|vsn_3.74.0           |Biobase_2.66.0              |BiocGenerics_0.52.0  |
+|pheatmap_1.0.13      |ggplot2_3.5.1               |stringr_1.5.1        |
+|dplyr_1.1.4.9000     |knitr_1.49                  |markdown_2.0         |
+|here_1.0.1           |                            |                     |
+
+
