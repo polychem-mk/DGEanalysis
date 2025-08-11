@@ -50,3 +50,6 @@ rsconnect/
 
 # DGE model (this file is too big)
 de.rds
+
+# README.html preview
+README.html
