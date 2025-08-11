@@ -40,8 +40,8 @@ from several Internet resources.\
 ◦ The source files used for the project are not included in this repository but
 are available on 
 [kaggle.com](https://www.kaggle.com/datasets/victorsabanzagil/polymers/data):
-[GSE68086_TEP_data_matrix.csv]{.file_name} contains metadata and
-[GSE68086_series_matrix.csv]{.file_name} contains RNA-seq read counts.
+*GSE68086_TEP_data_matrix.csv* contains metadata and
+*GSE68086_series_matrix.csv* contains RNA-seq read counts.
 Both source files were saved as *metadata_raw.rds* and *counts_raw.rds* respectively.
 
 ### Files
