@@ -12,7 +12,7 @@ Thus, RNA-seq data represent a matrix in which rows correspond to genes, columns
 correspond to samples, and values are reads counts, proportional to genes
 expression in samples.
 
-<img src="images/GEO3.png" style="float:left; padding-right:20px" width="25%" height="25%"/> 
+<img src="images/GEO3.png" align="left" width="25%" height="25%"/> 
 
 The largest public repository of gene expression data,
 [GEO](https://www.ncbi.nlm.nih.gov/geo/),
